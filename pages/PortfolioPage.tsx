@@ -1,6 +1,5 @@
-
 import React, { useState, useMemo } from 'react';
-import { AppData, Investment, InvestmentTrade, TransactionType, Transaction } from '../types';
+import { AppData, Investment, InvestmentTrade, TransactionType, Transaction, AccountType } from '../types';
 import Modal from '../components/Modal';
 
 interface PortfolioPageProps {
@@ -10,20 +9,38 @@ interface PortfolioPageProps {
 }
 
 const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }) => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isTradeOpen, setIsTradeOpen] = useState(false);
-  const [viewingLedger, setViewingLedger] = useState<Investment | null>(null);
+  const [activeTab, setActiveTab] = useState<'unrealized' | 'realized'>('unrealized');
+  const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
+  const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [editingAsset, setEditingAsset] = useState<Partial<Investment> | null>(null);
   const [tradingAsset, setTradingAsset] = useState<Investment | null>(null);
-  const [tradeData, setTradeData] = useState<Partial<InvestmentTrade>>({ 
-    type: 'buy', 
-    qty: 0, 
-    price: 0, 
+  const [tradeData, setTradeData] = useState({
+    type: 'buy' as 'buy' | 'sell',
+    qty: 0,
+    price: 0,
     charges: 0,
-    date: new Date().toISOString().split('T')[0]
+    date: new Date().toISOString().split('T')[0],
+    accountId: data.accounts[0]?.id || ''
   });
-  const [selectedAccount, setSelectedAccount] = useState(data.accounts[0]?.id || '');
 
+  const stats = useMemo(() => {
+    const activeInvestments = data.investments.filter(i => i.qty > 0);
+    const totalInvested = activeInvestments.reduce((sum, i) => sum + (i.qty * i.avgBuyPrice), 0);
+    const currentValue = activeInvestments.reduce((sum, i) => sum + (i.qty * i.currPrice), 0);
+    const unrealizedPL = currentValue - totalInvested;
+    const totalRealizedPL = data.investments.reduce((sum, i) => sum + (i.totalRealizedPL || 0), 0);
+
+    return { totalInvested, currentValue, unrealizedPL, totalRealizedPL };
+  }, [data.investments]);
+
+  const handleUpdateMktPrice = (assetId: string, newPrice: number) => {
+    const updated = data.investments.map(inv => 
+      inv.id === assetId ? { ...inv, currPrice: newPrice } : inv
+    );
+    onSave({ ...data, investments: updated });
+  };
+
+  // Fix: Added missing openAddAsset function for initializing new assets
   const openAddAsset = () => {
     setEditingAsset({
       id: Date.now().toString(),
@@ -36,280 +53,322 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
       status: 'active',
       totalRealizedPL: 0
     });
-    setIsModalOpen(true);
+    setIsAssetModalOpen(true);
   };
 
   const handleSaveAsset = () => {
     if (!editingAsset?.name) return;
     const newList = [...data.investments];
     const index = newList.findIndex(i => i.id === editingAsset.id);
-    if (index >= 0) newList[index] = editingAsset as Investment;
-    else newList.push(editingAsset as Investment);
     
+    const finalAsset = {
+      ...editingAsset,
+      history: editingAsset.history || [],
+      totalRealizedPL: editingAsset.totalRealizedPL || 0,
+      qty: editingAsset.qty || 0,
+      avgBuyPrice: editingAsset.avgBuyPrice || 0,
+      currPrice: editingAsset.currPrice || 0,
+      status: 'active'
+    } as Investment;
+
+    if (index >= 0) newList[index] = finalAsset;
+    else newList.push(finalAsset);
+
     onSave({ ...data, investments: newList });
-    setIsModalOpen(false);
-    showToast('Asset Registered');
+    setIsAssetModalOpen(false);
+    showToast('Asset Profile Synchronized');
   };
 
-  const handleTrade = () => {
-    // FIX: Added !tradeData.type check to satisfy TS compiler
-    if (!tradingAsset || !tradeData.qty || !tradeData.price || !selectedAccount || !tradeData.type) return;
+  const executeTrade = () => {
+    if (!tradingAsset || tradeData.qty <= 0 || tradeData.price <= 0) return;
+    if (tradeData.type === 'sell' && tradingAsset.qty < tradeData.qty) return showToast('Insufficient Quantity');
+
+    const timestamp = Date.now();
+    const tradeTotal = (tradeData.qty * tradeData.price) + (tradeData.type === 'buy' ? tradeData.charges : -tradeData.charges);
     
-    const qty = tradeData.qty;
-    const price = tradeData.price;
-    const charges = tradeData.charges || 0;
-    const tradeType = tradeData.type; // Extract to constant for stable typing
-    const asset = { ...tradingAsset };
-    
-    if (tradeType === 'buy') {
-      const totalCost = (asset.avgBuyPrice * asset.qty) + (qty * price) + charges;
-      asset.qty += qty;
-      asset.avgBuyPrice = totalCost / asset.qty;
-      asset.status = 'active';
-    } else {
-      if (qty > asset.qty) return showToast('Insufficient Quantity');
-      
-      const buyCostOfSoldUnits = asset.avgBuyPrice * qty;
-      const sellValue = qty * price;
-      const tradeRealized = sellValue - buyCostOfSoldUnits - charges;
-      
-      asset.totalRealizedPL += tradeRealized;
-      asset.qty -= qty;
-      if (asset.qty <= 0) {
-        asset.qty = 0;
-        asset.status = 'closed';
-      }
-    }
-
-    asset.history.push({
-      id: Date.now().toString(),
-      date: tradeData.date || new Date().toISOString().split('T')[0],
-      type: tradeType as 'buy' | 'sell',
-      qty,
-      price,
-      charges
-    });
-
-    const transactionValue = tradeType === 'buy' ? (qty * price + charges) : (qty * price - charges);
-
-    const newTrans: Transaction = {
-      id: Date.now().toString() + '-trade',
-      type: tradeType === 'buy' ? TransactionType.EXPENSE : TransactionType.INCOME,
-      date: tradeData.date || new Date().toISOString().split('T')[0],
-      description: `${tradeType.toUpperCase()}: ${asset.name} (${qty} units)`,
-      category: 'Investment',
-      account: selectedAccount,
-      amount: transactionValue,
-      notes: ''
+    // Create Transaction for Ledger
+    const ledgerTrans: Transaction = {
+      id: `trade-${timestamp}`,
+      type: tradeData.type === 'buy' ? TransactionType.EXPENSE : TransactionType.INCOME,
+      date: tradeData.date,
+      description: `${tradeData.type.toUpperCase()} ${tradingAsset.name} (${tradeData.qty} units)`,
+      category: 'Investment Trade',
+      amount: Math.abs(tradeTotal),
+      account: tradeData.accountId,
+      notes: `Trade executed at ₹${tradeData.price}/unit`
     };
 
-    const accounts = [...data.accounts];
-    const accIdx = accounts.findIndex(a => a.id === selectedAccount);
-    if (accIdx >= 0) {
-      if (newTrans.type === TransactionType.INCOME) accounts[accIdx].balance += transactionValue;
-      else accounts[accIdx].balance -= transactionValue;
-    }
+    // Update Investment Metrics
+    const updatedInvestments = data.investments.map(inv => {
+      if (inv.id === tradingAsset.id) {
+        const history = [...inv.history, { 
+          id: `tr-${timestamp}`, 
+          ...tradeData, 
+          qty: tradeData.qty, 
+          price: tradeData.price, 
+          charges: tradeData.charges 
+        } as InvestmentTrade];
 
-    const investments = data.investments.map(i => i.id === asset.id ? asset : i);
-    onSave({ 
-      ...data, 
-      investments, 
-      accounts, 
-      transactions: [newTrans, ...data.transactions] 
+        let newQty = inv.qty;
+        let newAvgPrice = inv.avgBuyPrice;
+        let realizedPL = inv.totalRealizedPL;
+
+        if (tradeData.type === 'buy') {
+          const totalCost = (inv.qty * inv.avgBuyPrice) + (tradeData.qty * tradeData.price) + tradeData.charges;
+          newQty += tradeData.qty;
+          newAvgPrice = totalCost / newQty;
+        } else {
+          const profitOnThisSell = (tradeData.price - inv.avgBuyPrice) * tradeData.qty - tradeData.charges;
+          realizedPL += profitOnThisSell;
+          newQty -= tradeData.qty;
+        }
+
+        return { 
+          ...inv, 
+          qty: newQty, 
+          avgBuyPrice: newAvgPrice, 
+          history, 
+          totalRealizedPL: realizedPL,
+          currPrice: tradeData.price // Update current market price to last traded price
+        };
+      }
+      return inv;
     });
 
-    setIsTradeOpen(false);
-    showToast(`${tradeType === 'buy' ? 'Buy Executed' : 'Sell Executed'}`);
+    // Update Account Balance
+    const updatedAccounts = data.accounts.map(acc => {
+      if (acc.id === tradeData.accountId) {
+        return { ...acc, balance: tradeData.type === 'buy' ? acc.balance - tradeTotal : acc.balance + tradeTotal };
+      }
+      return acc;
+    });
+
+    onSave({
+      ...data,
+      investments: updatedInvestments,
+      accounts: updatedAccounts,
+      transactions: [ledgerTrans, ...data.transactions]
+    });
+
+    setIsTradeModalOpen(false);
+    showToast('Trade Authorized & Executed');
   };
 
-  const portfolioSummary = useMemo(() => {
-    return data.investments.reduce((sum, inv) => {
-      if (inv.status === 'active') {
-        sum.totalValue += (inv.qty * inv.currPrice);
-        sum.totalCost += (inv.qty * inv.avgBuyPrice);
-      }
-      sum.totalRealized += inv.totalRealizedPL;
-      return sum;
-    }, { totalValue: 0, totalCost: 0, totalRealized: 0 });
-  }, [data.investments]);
-
-  const unrealizedPL = portfolioSummary.totalValue - portfolioSummary.totalCost;
-
   return (
-    <div className="space-y-8 animate-in">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+    <div className="space-y-10 animate-in pb-20">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h1 className="text-4xl font-black text-slate-900 tracking-tight uppercase">Portfolio Accounting</h1>
-          <p className="text-slate-500 font-medium text-lg mt-1">Real-time trade ledger and asset valuation.</p>
+          <h1 className="text-4xl font-black text-slate-900 tracking-tight uppercase">Portfolio Node</h1>
+          <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest mt-1">Multi-Asset Wealth Tracker</p>
         </div>
-        <button onClick={openAddAsset} className="px-8 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 flex items-center gap-3">
-          <i className="fas fa-plus"></i> New Asset
+        <button onClick={openAddAsset} className="px-8 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 flex items-center gap-3 hover:scale-105 transition-all uppercase tracking-widest text-[10px]">
+          <i className="fas fa-plus"></i> Initialize New Asset
         </button>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-b-4 border-b-indigo-500">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Mkt Valuation</p>
-          <p className="text-3xl font-black text-slate-900">₹{portfolioSummary.totalValue.toLocaleString()}</p>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm border-l-4 border-l-indigo-500">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Invested</p>
+          <p className="text-2xl font-black text-slate-800">₹{stats.totalInvested.toLocaleString()}</p>
         </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-b-4 border-b-emerald-500">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Realized P/L</p>
-          <p className="text-3xl font-black text-emerald-600">₹{portfolioSummary.totalRealized.toLocaleString()}</p>
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm border-l-4 border-l-indigo-300">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Current Valuation</p>
+          <p className="text-2xl font-black text-slate-800">₹{stats.currentValue.toLocaleString()}</p>
         </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-b-4 border-b-amber-500">
+        <div className={`bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm border-l-4 ${stats.unrealizedPL >= 0 ? 'border-l-emerald-500' : 'border-l-rose-500'}`}>
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Unrealized P/L</p>
-          <p className={`text-3xl font-black ${unrealizedPL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>₹{unrealizedPL.toLocaleString()}</p>
+          <p className={`text-2xl font-black ${stats.unrealizedPL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            {stats.unrealizedPL >= 0 ? '+' : ''}₹{stats.unrealizedPL.toLocaleString()}
+          </p>
+        </div>
+        <div className={`bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm border-l-4 ${stats.totalRealizedPL >= 0 ? 'border-l-indigo-600' : 'border-l-rose-600'}`}>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Realized P/L</p>
+          <p className={`text-2xl font-black ${stats.totalRealizedPL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {stats.totalRealizedPL >= 0 ? '+' : ''}₹{stats.totalRealizedPL.toLocaleString()}
+          </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {data.investments.map((inv) => (
-          <div key={inv.id} className={`bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 hover:shadow-xl transition-all ${inv.qty === 0 ? 'opacity-70 bg-slate-50' : ''}`}>
-            <div className="flex justify-between items-start mb-6">
-              <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center text-xl">
-                <i className={`fas ${inv.assetType === 'Stock' ? 'fa-chart-line' : inv.assetType === 'Gold' ? 'fa-coins' : inv.assetType === 'Real Estate' ? 'fa-home' : 'fa-gem'}`}></i>
-              </div>
-              <div className="flex gap-2">
-                 <button onClick={() => setViewingLedger(inv)} className="p-2 text-indigo-600 font-bold bg-indigo-50 rounded-xl text-[10px] uppercase tracking-widest">History</button>
-                 <button onClick={() => { setTradingAsset(inv); setIsTradeOpen(true); }} className="p-2 text-emerald-600 font-bold bg-emerald-50 rounded-xl text-[10px] uppercase tracking-widest">Trade</button>
-              </div>
-            </div>
-            <h3 className="text-xl font-black text-slate-900 mb-1">{inv.name}</h3>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">{inv.assetType} | {inv.qty > 0 ? 'ACTIVE' : 'EXITED'}</p>
-            
-            <div className="grid grid-cols-2 gap-4 text-sm mb-6">
-               <div>
-                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Holdings</p>
-                 <p className="font-bold text-slate-800">{inv.qty} Units</p>
-               </div>
-               <div>
-                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Avg Cost</p>
-                 <p className="font-bold text-slate-800">₹{inv.avgBuyPrice.toLocaleString(undefined, {maximumFractionDigits: 2})}</p>
-               </div>
-            </div>
-
-            <div className="space-y-4 pt-6 border-t border-slate-50">
-              <div className="flex justify-between items-end">
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Current Value</p>
-                  <p className="text-2xl font-black text-slate-900">₹{(inv.qty * inv.currPrice).toLocaleString()}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Realized P/L</p>
-                  <p className={`font-black ${inv.totalRealizedPL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>₹{inv.totalRealizedPL.toLocaleString()}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="bg-white p-1 rounded-[2rem] border border-slate-100 inline-flex shadow-sm mb-4">
+        <button 
+          onClick={() => setActiveTab('unrealized')} 
+          className={`px-10 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'unrealized' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}
+        >
+          Unrealized (Live)
+        </button>
+        <button 
+          onClick={() => setActiveTab('realized')} 
+          className={`px-10 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'realized' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}
+        >
+          Realized (Booked)
+        </button>
       </div>
 
-      <Modal title={`Investment Trade Ledger: ${viewingLedger?.name}`} isOpen={!!viewingLedger} onClose={() => setViewingLedger(null)} maxWidth="max-w-[95vw]">
-        <div className="overflow-x-auto scrollbar-hide">
-          <table className="w-full text-left border-collapse min-w-[1500px]">
-            <thead className="bg-slate-50">
-              <tr>
-                <th colSpan={5} className="px-4 py-3 text-[10px] font-black text-indigo-600 uppercase tracking-widest text-center border-r border-slate-200">BUY SIDE DATA</th>
-                <th colSpan={5} className="px-4 py-3 text-[10px] font-black text-rose-600 uppercase tracking-widest text-center border-r border-slate-200">SELL SIDE DATA</th>
-                <th colSpan={3} className="px-4 py-3 text-[10px] font-black text-slate-900 uppercase tracking-widest text-center">FINANCIAL RESULTS</th>
-              </tr>
-              <tr className="border-b border-slate-100">
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Buy Date</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Qty</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Buy Price</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Buy Value</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter border-r border-slate-200">Buy Charges</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Sell Date</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Sell Price</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Sell Value</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Sell Charges</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter border-r border-slate-200">Type</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Total Charges</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Net Invested</th>
-                <th className="px-3 py-4 text-[9px] font-black text-slate-400 uppercase tracking-tighter">Net P/L</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {viewingLedger?.history.map((h, i) => {
-                const buyValue = h.type === 'buy' ? h.qty * h.price : 0;
-                const sellValue = h.type === 'sell' ? h.qty * h.price : 0;
-                const netInvested = h.type === 'buy' ? (buyValue + h.charges) : (viewingLedger.avgBuyPrice * h.qty);
-                const netPL = h.type === 'sell' ? (sellValue - netInvested - h.charges) : 0;
-
+      <div className="bg-white rounded-[3rem] shadow-sm border border-slate-100 overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-slate-50/50">
+            <tr>
+              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Asset Hierarchy</th>
+              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Quantity</th>
+              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Avg Buy Price</th>
+              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Mkt Valuation Rate</th>
+              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">P/L Impact</th>
+              <th className="px-8 py-6"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {data.investments
+              .filter(inv => activeTab === 'unrealized' ? inv.qty > 0 : inv.totalRealizedPL !== 0)
+              .map(inv => {
+                const pl = (inv.currPrice - inv.avgBuyPrice) * inv.qty;
+                const plPct = inv.avgBuyPrice > 0 ? (pl / (inv.qty * inv.avgBuyPrice)) * 100 : 0;
+                
                 return (
-                  <tr key={h.id} className="hover:bg-slate-50/50">
-                    <td className="px-3 py-4 text-[11px] font-bold text-slate-500">{h.type === 'buy' ? h.date : '-'}</td>
-                    <td className="px-3 py-4 text-[11px] font-black text-slate-800">{h.qty}</td>
-                    <td className="px-3 py-4 text-[11px] font-bold text-slate-600">{h.type === 'buy' ? `₹${h.price.toLocaleString()}` : '-'}</td>
-                    <td className="px-3 py-4 text-[11px] font-black text-indigo-600">{h.type === 'buy' ? `₹${buyValue.toLocaleString()}` : '-'}</td>
-                    <td className="px-3 py-4 text-[11px] font-bold text-slate-400 border-r border-slate-200">{h.type === 'buy' ? `₹${h.charges.toLocaleString()}` : '-'}</td>
-                    <td className="px-3 py-4 text-[11px] font-bold text-slate-500">{h.type === 'sell' ? h.date : '-'}</td>
-                    <td className="px-3 py-4 text-[11px] font-bold text-slate-600">{h.type === 'sell' ? `₹${h.price.toLocaleString()}` : '-'}</td>
-                    <td className="px-3 py-4 text-[11px] font-black text-rose-600">{h.type === 'sell' ? `₹${sellValue.toLocaleString()}` : '-'}</td>
-                    <td className="px-3 py-4 text-[11px] font-bold text-slate-400">{h.type === 'sell' ? `₹${h.charges.toLocaleString()}` : '-'}</td>
-                    <td className="px-3 py-4 border-r border-slate-200">
-                      <span className={`text-[8px] font-black px-2 py-0.5 rounded-md uppercase ${h.type === 'buy' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600'}`}>{h.type}</span>
+                  <tr key={inv.id} className="group hover:bg-slate-50/50 transition-all">
+                    <td className="px-8 py-6">
+                      <p className="text-sm font-black text-slate-800">{inv.name}</p>
+                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">{inv.assetType}</span>
                     </td>
-                    <td className="px-3 py-4 text-[11px] font-bold text-slate-400">₹{h.charges.toLocaleString()}</td>
-                    <td className="px-3 py-4 text-[11px] font-black text-slate-700">₹{netInvested.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
-                    <td className={`px-3 py-4 text-[11px] font-black ${netPL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                      {h.type === 'sell' ? `₹${netPL.toLocaleString(undefined, {maximumFractionDigits: 0})}` : 'Holding'}
+                    <td className="px-8 py-6 text-xs font-bold text-slate-600">{inv.qty} units</td>
+                    <td className="px-8 py-6 text-xs font-bold text-slate-400">₹{inv.avgBuyPrice.toLocaleString()}</td>
+                    <td className="px-8 py-6">
+                      {activeTab === 'unrealized' ? (
+                        <div className="flex items-center gap-2 group/input">
+                          <span className="text-xs font-black text-slate-300">₹</span>
+                          <input 
+                            type="number" 
+                            className="w-32 bg-slate-50 border-0 rounded-xl px-4 py-2 text-sm font-bold focus:ring-2 focus:ring-indigo-500 transition-all"
+                            value={inv.currPrice || ''}
+                            onChange={(e) => handleUpdateMktPrice(inv.id, parseFloat(e.target.value) || 0)}
+                          />
+                          <i className="fas fa-arrows-rotate text-[10px] text-slate-200 group-hover/input:text-indigo-400 animate-spin-slow"></i>
+                        </div>
+                      ) : (
+                        <p className="text-xs font-bold text-slate-400">Settled</p>
+                      )}
+                    </td>
+                    <td className="px-8 py-6 text-right">
+                      {activeTab === 'unrealized' ? (
+                        <div>
+                          <p className={`text-sm font-black ${pl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                            {pl >= 0 ? '+' : ''}₹{pl.toLocaleString()}
+                          </p>
+                          <p className={`text-[10px] font-black ${pl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {pl >= 0 ? '+' : ''}{plPct.toFixed(2)}%
+                          </p>
+                        </div>
+                      ) : (
+                        <div>
+                           <p className={`text-sm font-black ${inv.totalRealizedPL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {inv.totalRealizedPL >= 0 ? '+' : ''}₹{inv.totalRealizedPL.toLocaleString()}
+                          </p>
+                          <span className="text-[9px] font-black text-slate-300 uppercase">Booked Profit</span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-8 py-6 text-right">
+                       <div className="flex gap-4 justify-end">
+                         <button 
+                           onClick={() => { setTradingAsset(inv); setIsTradeModalOpen(true); }}
+                           className="p-3 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-600 hover:text-white transition-all text-xs"
+                           title="Execute Trade"
+                         >
+                           <i className="fas fa-shuffle"></i>
+                         </button>
+                         <button 
+                           onClick={() => { setEditingAsset(inv); setIsAssetModalOpen(true); }}
+                           className="p-3 bg-slate-50 text-slate-300 hover:text-indigo-600 rounded-xl transition-all text-xs"
+                         >
+                           <i className="fas fa-pen"></i>
+                         </button>
+                       </div>
                     </td>
                   </tr>
                 );
-              })}
-            </tbody>
-          </table>
-        </div>
+            })}
+            {data.investments.length === 0 && (
+              <tr><td colSpan={6} className="py-40 text-center text-slate-200 uppercase font-black tracking-widest text-xs">No assets recorded in this sector</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Asset Config Modal */}
+      <Modal title="Asset Parameters" isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)}>
+         <div className="space-y-6">
+            <div className="space-y-1">
+               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Asset Identity</label>
+               <input value={editingAsset?.name} onChange={e => setEditingAsset({...editingAsset!, name: e.target.value})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" placeholder="Asset Name / Symbol" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Asset Category</label>
+                  <select value={editingAsset?.assetType} onChange={e => setEditingAsset({...editingAsset!, assetType: e.target.value as any})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold">
+                    {['Stock', 'MF', 'Gold', 'Crypto', 'Real Estate', 'FD', 'Other'].map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+               </div>
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Opening Market Price (₹)</label>
+                  <input type="number" value={editingAsset?.currPrice || ''} onChange={e => setEditingAsset({...editingAsset!, currPrice: parseFloat(e.target.value) || 0})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
+               </div>
+            </div>
+            <button onClick={handleSaveAsset} className="w-full py-5 bg-indigo-600 text-white font-black rounded-3xl shadow-xl mt-4 uppercase tracking-widest text-[11px]">Authorize Asset Initializer</button>
+         </div>
       </Modal>
 
-      <Modal title="Configure New Asset" isOpen={isModalOpen} onClose={() => setIsModalOpen(false)}>
-        <div className="space-y-6">
-           <input placeholder="Asset Identity (e.g. BTC, Property A, RELIANCE)" value={editingAsset?.name} onChange={e => setEditingAsset({...editingAsset!, name: e.target.value})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
-           <div className="grid grid-cols-2 gap-4">
-              <select value={editingAsset?.assetType} onChange={e => setEditingAsset({...editingAsset!, assetType: e.target.value as any})} className="bg-slate-50 p-4 rounded-2xl font-bold border-0">
-                 <option>Stock</option><option>MF</option><option>Gold</option><option>Crypto</option><option>Real Estate</option><option>FD</option><option>Other</option>
-              </select>
-              <input type="number" placeholder="Current Mkt Price" value={editingAsset?.currPrice || ''} onChange={e => setEditingAsset({...editingAsset!, currPrice: parseFloat(e.target.value) || 0})} className="bg-slate-50 p-4 rounded-2xl font-bold border-0" />
-           </div>
-           <button onClick={handleSaveAsset} className="w-full py-5 bg-indigo-600 text-white font-black rounded-3xl shadow-xl mt-4 uppercase tracking-widest text-xs">Authorize Asset</button>
-        </div>
-      </Modal>
+      {/* Trade Execution Modal */}
+      <Modal title={`Trade Execution: ${tradingAsset?.name}`} isOpen={isTradeModalOpen} onClose={() => setIsTradeModalOpen(false)}>
+         <div className="space-y-6">
+            <div className="flex bg-slate-100 p-1.5 rounded-2xl">
+               <button onClick={() => setTradeData({...tradeData, type: 'buy'})} className={`flex-1 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tradeData.type === 'buy' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-100' : 'text-slate-400'}`}>Purchase (Buy)</button>
+               <button onClick={() => setTradeData({...tradeData, type: 'sell'})} className={`flex-1 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tradeData.type === 'sell' ? 'bg-rose-500 text-white shadow-lg shadow-rose-100' : 'text-slate-400'}`}>Liquidate (Sell)</button>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Volume (Qty)</label>
+                  <input type="number" value={tradeData.qty || ''} onChange={e => setTradeData({...tradeData, qty: parseFloat(e.target.value) || 0})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
+               </div>
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Execution Price (₹)</label>
+                  <input type="number" value={tradeData.price || ''} onChange={e => setTradeData({...tradeData, price: parseFloat(e.target.value) || 0})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
+               </div>
+            </div>
 
-      <Modal title={`Execute Trade: ${tradingAsset?.name}`} isOpen={isTradeOpen} onClose={() => setIsTradeOpen(false)}>
-        <div className="space-y-6">
-           <div className="flex bg-slate-100 p-1 rounded-2xl">
-              <button onClick={() => setTradeData({...tradeData, type: 'buy'})} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${tradeData.type === 'buy' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>BUY SIDE</button>
-              <button onClick={() => setTradeData({...tradeData, type: 'sell'})} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${tradeData.type === 'sell' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}>SELL SIDE</button>
-           </div>
-           <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase">Trade Date</label>
-                <input type="date" value={tradeData.date} onChange={e => setTradeData({...tradeData, date: e.target.value})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase">Quantity</label>
-                <input type="number" value={tradeData.qty || ''} onChange={e => setTradeData({...tradeData, qty: parseFloat(e.target.value) || 0})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
-              </div>
-           </div>
-           <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase">Trade Price (₹)</label>
-                <input type="number" value={tradeData.price || ''} onChange={e => setTradeData({...tradeData, price: parseFloat(e.target.value) || 0})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase">Charges (Brokerage/Tax)</label>
-                <input type="number" value={tradeData.charges || ''} onChange={e => setTradeData({...tradeData, charges: parseFloat(e.target.value) || 0})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
-              </div>
-           </div>
-           <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase">Payment Account</label>
-                <select value={selectedAccount} onChange={e => setSelectedAccount(e.target.value)} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold">
-                  {data.accounts.map(a => <option key={a.id} value={a.id}>{a.name} (₹{a.balance.toLocaleString()})</option>)}
-                </select>
-           </div>
-           <button onClick={handleTrade} className={`w-full py-5 text-white font-black rounded-3xl shadow-xl mt-4 uppercase tracking-widest text-xs ${tradeData.type === 'buy' ? 'bg-indigo-600' : 'bg-rose-600'}`}>Post Trade to Ledger</button>
-        </div>
+            <div className="grid grid-cols-2 gap-4">
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Brokerage/Charges (₹)</label>
+                  <input type="number" value={tradeData.charges || ''} onChange={e => setTradeData({...tradeData, charges: parseFloat(e.target.value) || 0})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold" />
+               </div>
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Settlement Account</label>
+                  <select value={tradeData.accountId} onChange={e => setTradeData({...tradeData, accountId: e.target.value})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-0 font-bold">
+                    {data.accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name} (₹{acc.balance.toLocaleString()})</option>)}
+                  </select>
+               </div>
+            </div>
+
+            <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
+               <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                  <span>Gross Value</span>
+                  <span>₹{(tradeData.qty * tradeData.price).toLocaleString()}</span>
+               </div>
+               <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <span>Charges Impact</span>
+                  <span className={tradeData.type === 'buy' ? 'text-rose-500' : 'text-rose-500'}>{tradeData.type === 'buy' ? '+' : '-'} ₹{tradeData.charges.toLocaleString()}</span>
+               </div>
+               <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-200">
+                  <span className="text-xs font-black text-slate-800 uppercase tracking-widest">Net Cash Impact</span>
+                  <span className={`text-lg font-black ${tradeData.type === 'buy' ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    {tradeData.type === 'buy' ? '-' : '+'} ₹{((tradeData.qty * tradeData.price) + (tradeData.type === 'buy' ? tradeData.charges : -tradeData.charges)).toLocaleString()}
+                  </span>
+               </div>
+            </div>
+
+            <button onClick={executeTrade} className={`w-full py-5 text-white font-black rounded-3xl shadow-xl mt-2 uppercase tracking-widest text-[11px] transition-all ${tradeData.type === 'buy' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
+              Verify & Authorize Trade
+            </button>
+         </div>
       </Modal>
     </div>
   );
