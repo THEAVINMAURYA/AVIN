@@ -18,6 +18,7 @@ import GoalsPage from './pages/GoalsPage';
 import BudgetPage from './pages/BudgetPage';
 import CalendarPage from './pages/CalendarPage';
 import CategoriesPage from './pages/CategoriesPage';
+import SystemPage from './pages/SystemPage';
 
 const INITIAL_DATA: AppData = {
   auth: { userId: '', password: '' },
@@ -140,6 +141,7 @@ const App: React.FC = () => {
       case 'budget': return <BudgetPage {...props} />;
       case 'calendar': return <CalendarPage {...props} />;
       case 'categories': return <CategoriesPage {...props} />;
+      case 'system': return <SystemPage {...props} />;
       default: return <Dashboard data={data} onNavigate={setCurrentPage} />;
     }
   };
@@ -223,6 +225,7 @@ const App: React.FC = () => {
               { id: 'categories', label: 'Categories', icon: 'fa-tags' },
               { id: 'parties', label: 'Parties', icon: 'fa-address-book' },
               { id: 'inventory', label: 'Inventory', icon: 'fa-boxes-stacked' },
+              { id: 'system', label: 'System Node', icon: 'fa-gear' },
             ].map(item => (
               <button 
                 key={item.id} 
