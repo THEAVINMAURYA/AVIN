@@ -150,7 +150,6 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
     // Synchronize Settlement Account
     const updatedAccounts = data.accounts.map(acc => {
       if (acc.id === tradeData.accountId) {
-        // Simple balance update for now
         const delta = tradeData.type === 'buy' ? -netImpact : netImpact;
         return { ...acc, balance: acc.balance + delta };
       }
@@ -226,6 +225,7 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
             <tr>
               <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Asset Node</th>
               <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Running Qty</th>
+              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Charges</th>
               <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Net Impact</th>
               <th className="px-8 py-6"></th>
             </tr>
@@ -234,6 +234,8 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
             {filteredInvestments.map(inv => {
               const currentUnrealizedPL = (inv.currPrice - inv.avgBuyPrice) * inv.qty;
               const plPct = inv.avgBuyPrice > 0 ? (currentUnrealizedPL / (inv.qty * inv.avgBuyPrice)) * 100 : 0;
+              const assetTotalCharges = inv.history.reduce((sum, h) => sum + h.charges, 0);
+              
               return (
                 <tr key={inv.id} className="group hover:bg-slate-50/50 transition-all">
                   <td className="px-8 py-6">
@@ -241,6 +243,10 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
                     <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">{inv.assetType} | Weighted ₹{inv.avgBuyPrice.toFixed(1)}</span>
                   </td>
                   <td className="px-8 py-6 text-xs font-bold text-slate-600">{inv.qty.toLocaleString()} Units</td>
+                  <td className="px-8 py-6">
+                    <p className="text-sm font-black text-rose-500">₹{assetTotalCharges.toLocaleString()}</p>
+                    <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Node Friction</span>
+                  </td>
                   <td className="px-8 py-6 text-right">
                     <p className={`text-sm font-black ${ (activeTab === 'unrealized' ? currentUnrealizedPL : inv.totalRealizedPL) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                       ₹{(activeTab === 'unrealized' ? currentUnrealizedPL : inv.totalRealizedPL).toLocaleString()}
@@ -279,6 +285,10 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
                 <div className="text-right">
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Active Units</p>
                   <p className="text-xl font-black text-slate-900">{viewingAssetLedger?.qty.toLocaleString()}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total Charges</p>
+                  <p className="text-xl font-black text-rose-500">₹{viewingAssetLedger?.history.reduce((sum, h) => sum + h.charges, 0).toLocaleString()}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Weighted Cost</p>
