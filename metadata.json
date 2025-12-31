@@ -1,7 +1,8 @@
 {
   "requestFramePermissions": [
-    "camera"
+    "camera",
+    "microphone"
   ],
-  "name": "Copy of Copy of Copy of AVIN MAURYA",
-  "description": ""
+  "name": "AVIN MAURYA | Maya AI",
+  "description": "Sovereign Financial Node with Maya AI Companion Integration"
 }

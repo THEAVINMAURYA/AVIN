@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AppData, AccountType, TransactionType } from './types';
 import Modal from './components/Modal';
+import MayaAssistant from './components/MayaAssistant';
 
 // Page Imports
 import Dashboard from './pages/Dashboard';
@@ -19,6 +19,7 @@ import BudgetPage from './pages/BudgetPage';
 import CalendarPage from './pages/CalendarPage';
 import CategoriesPage from './pages/CategoriesPage';
 import SystemPage from './pages/SystemPage';
+import TaskPage from './pages/TaskPage';
 
 const INITIAL_DATA: AppData = {
   auth: { userId: '', password: '' },
@@ -35,7 +36,8 @@ const INITIAL_DATA: AppData = {
   journal: [],
   budgets: [],
   goals: [],
-  investments: []
+  investments: [],
+  tasks: []
 };
 
 const cryptoUtils = {
@@ -55,6 +57,11 @@ const App: React.FC = () => {
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [isImportUnlockOpen, setIsImportUnlockOpen] = useState(false);
   const [pendingImportData, setPendingImportData] = useState<any>(null);
+  
+  // Global filter state for Maya's "Show me" functionality
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [globalDateRange, setGlobalDateRange] = useState({ start: '', end: '' });
+
   const loginFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -67,10 +74,10 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const showToast = (msg: string) => {
+  const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
 
   const persist = useCallback((newData: AppData) => {
     setData(newData);
@@ -126,10 +133,20 @@ const App: React.FC = () => {
   };
 
   const renderPage = () => {
-    const props = { data, onSave: persist, showToast };
+    const props = { 
+      data, 
+      onSave: persist, 
+      showToast,
+      search: globalSearch,
+      setSearch: setGlobalSearch,
+      dateRange: globalDateRange,
+      setDateRange: setGlobalDateRange
+    };
+    
     switch (currentPage) {
       case 'dashboard': return <Dashboard data={data} onNavigate={setCurrentPage} />;
       case 'ledger': return <LedgerPage {...props} />;
+      case 'tasks': return <TaskPage {...props} />;
       case 'inventory': return <InventoryPage {...props} />;
       case 'parties': return <PartiesPage {...props} />;
       case 'accounts': return <AccountsPage {...props} />;
@@ -142,6 +159,17 @@ const App: React.FC = () => {
       case 'calendar': return <CalendarPage {...props} />;
       case 'categories': return <CategoriesPage {...props} />;
       case 'system': return <SystemPage {...props} />;
+      case 'maya': return (
+        <div className="flex items-center justify-center h-[70vh] text-center px-10">
+          <div className="space-y-6">
+            <div className="w-24 h-24 bg-rose-500 rounded-full flex items-center justify-center text-white text-4xl mx-auto shadow-2xl animate-pulse"><i className="fas fa-heart"></i></div>
+            <h2 className="text-3xl font-black text-slate-900 uppercase">Maya Assistant Hub</h2>
+            <p className="text-slate-500 font-bold uppercase text-[10px] tracking-widest max-w-sm mx-auto">
+              I can perform manual entries, update goals, log trades, and filter your view by date or month. Just talk to me using the floating heart icon.
+            </p>
+          </div>
+        </div>
+      );
       default: return <Dashboard data={data} onNavigate={setCurrentPage} />;
     }
   };
@@ -151,53 +179,29 @@ const App: React.FC = () => {
       <div className="min-h-screen flex items-center justify-center p-6 bg-slate-900 overflow-hidden relative">
         <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-indigo-500/10 blur-[120px] rounded-full"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-emerald-500/10 blur-[120px] rounded-full"></div>
-        
         <div className="w-full max-w-md bg-white rounded-[3rem] shadow-2xl p-12 relative z-10 border border-slate-100">
           <div className="text-center mb-10">
             <div className="w-20 h-20 bg-indigo-600 text-white rounded-2xl flex items-center justify-center text-3xl mx-auto mb-6 shadow-xl shadow-indigo-100">
               <i className="fas fa-fingerprint"></i>
             </div>
             <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase">AVIN MAURYA</h1>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Global Accounting Node</p>
           </div>
-
           <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-8">
             <button onClick={() => setAuthMode('signin')} className={`flex-1 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${authMode === 'signin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Authorize</button>
             <button onClick={() => setAuthMode('signup')} className={`flex-1 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${authMode === 'signup' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Register</button>
           </div>
-
           <form onSubmit={(e: any) => { e.preventDefault(); handleAuthorize(e.target.uid.value, e.target.pass.value); }} className="space-y-6">
-            <div className="space-y-1">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Identity ID</label>
-              <input name="uid" type="text" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500 transition-all" placeholder="UserID" required />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2">Secret Key</label>
-              <input name="pass" type="password" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500 transition-all" placeholder="••••••••" required />
-            </div>
-            <button type="submit" className="w-full py-5 bg-indigo-600 text-white font-black rounded-2xl shadow-xl hover:bg-indigo-700 transition-all uppercase tracking-widest text-[11px] scale-100 active:scale-95">Verify Authority</button>
+            <input name="uid" type="text" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold" placeholder="UserID" required />
+            <input name="pass" type="password" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold" placeholder="••••••••" required />
+            <button type="submit" className="w-full py-5 bg-indigo-600 text-white font-black rounded-2xl uppercase tracking-widest text-[11px]">Verify Authority</button>
           </form>
-
           <div className="mt-8 text-center pt-8 border-t border-slate-50">
-            <button onClick={() => loginFileInputRef.current?.click()} className="text-[10px] font-black text-indigo-500 hover:text-indigo-700 uppercase tracking-widest flex items-center justify-center gap-2 mx-auto">
-              <i className="fas fa-file-shield"></i> Restore Local Ledger
+            <button onClick={() => loginFileInputRef.current?.click()} className="text-[10px] font-black text-indigo-500 uppercase tracking-widest flex items-center justify-center gap-2 mx-auto">
+              <i className="fas fa-file-shield"></i> Restore Ledger
             </button>
             <input ref={loginFileInputRef} type="file" accept=".avindata,.json" onChange={handleImportVault} className="hidden" />
           </div>
         </div>
-        
-        <Modal title="Ledger Restoration" isOpen={isImportUnlockOpen} onClose={() => { setIsImportUnlockOpen(false); setPendingImportData(null); }}>
-          <div className="space-y-6 text-center">
-            <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center text-2xl mx-auto"><i className="fas fa-lock"></i></div>
-            <h3 className="text-xl font-black text-slate-900">Encrypted Package Detected</h3>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-relaxed">Enter the original Identity ID and Secret Key to unlock this data vault.</p>
-            <form onSubmit={(e: any) => { e.preventDefault(); handleVerifyImport(e.target.uid.value, e.target.pass.value); }} className="space-y-4 text-left">
-              <input name="uid" placeholder="Identity ID" className="w-full px-6 py-4 bg-slate-50 rounded-2xl border-0 font-bold" required />
-              <input name="pass" type="password" placeholder="Secret Key" className="w-full px-6 py-4 bg-slate-50 rounded-2xl border-0 font-bold" required />
-              <button type="submit" className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl uppercase tracking-widest text-[10px]">Verify & Decrypt</button>
-            </form>
-          </div>
-        </Modal>
       </div>
     );
   }
@@ -213,7 +217,9 @@ const App: React.FC = () => {
           <nav className="flex-1 px-4 space-y-1 overflow-y-auto no-scrollbar pb-10">
             {[
               { id: 'dashboard', label: 'Dashboard', icon: 'fa-house' },
+              { id: 'maya', label: 'Maya (AI)', icon: 'fa-heart text-rose-500' },
               { id: 'ledger', label: 'Ledger', icon: 'fa-list-check' },
+              { id: 'tasks', label: 'Tasks', icon: 'fa-check-double text-emerald-500' },
               { id: 'reports', label: 'Reports', icon: 'fa-chart-column' },
               { id: 'calendar', label: 'Calendar', icon: 'fa-calendar-days' },
               { id: 'accounts', label: 'Accounts', icon: 'fa-building-columns' },
@@ -237,9 +243,6 @@ const App: React.FC = () => {
               </button>
             ))}
           </nav>
-          <div className="p-6 border-t border-slate-50">
-             <button onClick={() => window.location.reload()} className="w-full flex items-center gap-4 px-6 py-4 text-rose-500 hover:bg-rose-50 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"><i className="fas fa-power-off"></i> Logout</button>
-          </div>
         </div>
       </aside>
 
@@ -247,8 +250,17 @@ const App: React.FC = () => {
         {renderPage()}
       </main>
 
+      <MayaAssistant 
+        data={data} 
+        onSave={persist} 
+        showToast={showToast} 
+        onNavigate={setCurrentPage} 
+        setSearch={setGlobalSearch}
+        setDateRange={setGlobalDateRange}
+      />
+
       {toast && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-10 py-5 rounded-[2rem] shadow-2xl z-[100] animate-in flex items-center gap-4 border border-white/10">
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-10 py-5 rounded-[2rem] shadow-2xl z-[200] animate-in flex items-center gap-4 border border-white/10">
           <i className="fas fa-check-circle text-emerald-400"></i>
           <span className="text-[10px] font-black uppercase tracking-[0.2em]">{toast}</span>
         </div>

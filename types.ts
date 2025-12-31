@@ -119,6 +119,14 @@ export interface Goal {
   current: number;
 }
 
+export interface Task {
+  id: string;
+  content: string;
+  dueDate: string;
+  priority: 'low' | 'medium' | 'high';
+  completed: boolean;
+}
+
 export interface AppData {
   auth: { userId: string; password: string };
   sync: {
@@ -136,4 +144,5 @@ export interface AppData {
   budgets: Budget[];
   goals: Goal[];
   investments: Investment[];
+  tasks: Task[];
 }
