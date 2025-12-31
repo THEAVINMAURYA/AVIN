@@ -101,6 +101,7 @@ export interface CredentialItem {
   label: string;
   user: string;
   pass: string;
+  subPass?: string;
   link: string;
 }
 

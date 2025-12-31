@@ -15,7 +15,7 @@ const VaultPage: React.FC<VaultPageProps> = ({ data, onSave, showToast }) => {
   const [editingVault, setEditingVault] = useState<Partial<Credential> | null>(null);
   
   // Reveal state
-  const [revealTarget, setRevealTarget] = useState<{ vaultId: string, itemIdx: number } | null>(null);
+  const [revealTarget, setRevealTarget] = useState<{ vaultId: string, itemIdx: number, field: 'pass' | 'subPass' } | null>(null);
   const [revealPassword, setRevealPassword] = useState('');
   const [revealedValue, setRevealedValue] = useState<string | null>(null);
 
@@ -29,7 +29,7 @@ const VaultPage: React.FC<VaultPageProps> = ({ data, onSave, showToast }) => {
       id: Date.now().toString(),
       clientName: '',
       email: '',
-      items: [{ label: 'Primary Password', user: '', pass: '', link: '' }]
+      items: [{ label: 'Primary Password', user: '', pass: '', subPass: '', link: '' }]
     });
     setIsModalOpen(true);
   };
@@ -50,8 +50,9 @@ const VaultPage: React.FC<VaultPageProps> = ({ data, onSave, showToast }) => {
     e.preventDefault();
     if (revealPassword === data.auth.password) {
       const vault = data.credentials.find(v => v.id === revealTarget?.vaultId);
-      const pass = vault?.items[revealTarget!.itemIdx].pass;
-      setRevealedValue(pass || 'N/A');
+      const item = vault?.items[revealTarget!.itemIdx];
+      const val = revealTarget?.field === 'subPass' ? item?.subPass : item?.pass;
+      setRevealedValue(val || 'N/A');
       showToast('Identity Verified');
     } else {
       showToast('Authority Denied: Incorrect Secret Key');
@@ -70,7 +71,7 @@ const VaultPage: React.FC<VaultPageProps> = ({ data, onSave, showToast }) => {
     if (editingVault) {
       setEditingVault({
         ...editingVault,
-        items: [...(editingVault.items || []), { label: '', user: '', pass: '', link: '' }]
+        items: [...(editingVault.items || []), { label: '', user: '', pass: '', subPass: '', link: '' }]
       });
     }
   };
@@ -88,6 +89,11 @@ const VaultPage: React.FC<VaultPageProps> = ({ data, onSave, showToast }) => {
       onSave({ ...data, credentials: data.credentials.filter(v => v.id !== id) });
       showToast('Vault Entry Removed');
     }
+  };
+
+  const copyToClipboard = (val: string, label: string) => {
+    navigator.clipboard.writeText(val);
+    showToast(`${label} Copied to Clipboard`);
   };
 
   return (
@@ -124,31 +130,77 @@ const VaultPage: React.FC<VaultPageProps> = ({ data, onSave, showToast }) => {
             <h3 className="text-xl font-black text-slate-900 tracking-tight mb-1">{item.clientName}</h3>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 truncate">{item.email || 'Independent Profile'}</p>
             
-            <div className="space-y-3">
-              {item.items.map((key, i) => (
-                <div key={i} className="p-5 bg-slate-50 rounded-2xl border border-slate-50 group/field">
-                   <div className="flex justify-between items-center mb-2">
-                     <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{key.label}</span>
-                     <div className="flex gap-3">
+            <div className="space-y-4">
+              {item.items.map((field, i) => (
+                <div key={i} className="p-6 bg-slate-50 rounded-[2.5rem] border border-slate-50 group/field space-y-4">
+                   <div className="flex justify-between items-center">
+                     <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{field.label}</span>
+                   </div>
+
+                   {/* Username Section */}
+                   <div className="flex items-center justify-between gap-4 p-3 bg-white rounded-2xl border border-slate-100">
+                      <div className="flex flex-col">
+                        <span className="text-[7px] font-black text-slate-300 uppercase tracking-widest">Username</span>
+                        <p className="text-[11px] font-bold text-slate-700 truncate">{field.user || 'Not Defined'}</p>
+                      </div>
+                      <button 
+                        onClick={() => copyToClipboard(field.user, 'Username')} 
+                        className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-indigo-600 transition-all"
+                        title="Copy Username"
+                      >
+                        <i className="fas fa-copy"></i>
+                      </button>
+                   </div>
+
+                   {/* Password Section */}
+                   <div className="flex items-center justify-between gap-4 p-3 bg-white rounded-2xl border border-slate-100">
+                      <div className="flex flex-col">
+                        <span className="text-[7px] font-black text-slate-300 uppercase tracking-widest">Password</span>
+                        <p className="text-xs font-black text-slate-300 tracking-tighter">••••••••</p>
+                      </div>
+                      <div className="flex gap-1">
                         <button 
-                          onClick={() => { setRevealTarget({ vaultId: item.id, itemIdx: i }); setIsRevealModalOpen(true); }}
-                          className="text-[9px] font-black text-indigo-500 uppercase tracking-widest hover:text-indigo-700"
+                          onClick={() => { setRevealTarget({ vaultId: item.id, itemIdx: i, field: 'pass' }); setIsRevealModalOpen(true); }}
+                          className="p-2 hover:bg-slate-50 rounded-xl text-indigo-400 hover:text-indigo-600 transition-all"
+                          title="Reveal Password"
                         >
-                          <i className="fas fa-eye mr-1"></i> Reveal
+                          <i className="fas fa-eye"></i>
                         </button>
                         <button 
-                          onClick={() => { navigator.clipboard.writeText(key.pass); showToast('Key Copied to Clipboard'); }} 
-                          className="text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-900"
+                          onClick={() => copyToClipboard(field.pass, 'Password')} 
+                          className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-indigo-600 transition-all"
+                          title="Copy Password"
                         >
-                          Copy
+                          <i className="fas fa-copy"></i>
                         </button>
+                      </div>
+                   </div>
+
+                   {/* Sub Password Section */}
+                   {field.subPass && (
+                     <div className="flex items-center justify-between gap-4 p-3 bg-white rounded-2xl border border-slate-100 border-dashed">
+                        <div className="flex flex-col">
+                          <span className="text-[7px] font-black text-indigo-300 uppercase tracking-widest">Sub Password</span>
+                          <p className="text-xs font-black text-slate-300 tracking-tighter">••••••••</p>
+                        </div>
+                        <div className="flex gap-1">
+                          <button 
+                            onClick={() => { setRevealTarget({ vaultId: item.id, itemIdx: i, field: 'subPass' }); setIsRevealModalOpen(true); }}
+                            className="p-2 hover:bg-slate-50 rounded-xl text-indigo-400 hover:text-indigo-600 transition-all"
+                            title="Reveal Sub Password"
+                          >
+                            <i className="fas fa-eye"></i>
+                          </button>
+                          <button 
+                            onClick={() => copyToClipboard(field.subPass || '', 'Sub Password')} 
+                            className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-indigo-600 transition-all"
+                            title="Copy Sub Password"
+                          >
+                            <i className="fas fa-copy"></i>
+                          </button>
+                        </div>
                      </div>
-                   </div>
-                   <div className="flex items-center gap-2">
-                      <p className="text-xs font-bold text-slate-700 truncate flex-1">{key.user}</p>
-                      <span className="text-slate-200">|</span>
-                      <p className="text-xs font-black text-slate-300 tracking-tighter">••••••••</p>
-                   </div>
+                   )}
                 </div>
               ))}
             </div>
@@ -171,7 +223,9 @@ const VaultPage: React.FC<VaultPageProps> = ({ data, onSave, showToast }) => {
                    <i className="fas fa-unlock"></i>
                 </div>
                 <div>
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Authenticated Credential</p>
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                     Authenticated {revealTarget?.field === 'subPass' ? 'Sub Password' : 'Primary Password'}
+                   </p>
                    <p className="text-3xl font-black text-slate-900 bg-slate-50 p-6 rounded-3xl border border-slate-100 break-all">{revealedValue}</p>
                 </div>
                 <button onClick={closeReveal} className="px-8 py-4 bg-slate-900 text-white font-black rounded-2xl uppercase tracking-widest text-[10px] shadow-xl">Close Secure View</button>
@@ -215,19 +269,31 @@ const VaultPage: React.FC<VaultPageProps> = ({ data, onSave, showToast }) => {
            <div className="space-y-4 pt-4">
               <div className="flex justify-between items-center px-1">
                 <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Key Fields</h4>
-                <button onClick={addItem} className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl hover:bg-indigo-100 transition-all">Add Field</button>
+                <button onClick={addItem} className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl hover:bg-indigo-100 transition-all">Add Field Set</button>
               </div>
               {editingVault?.items?.map((item, i) => (
-                <div key={i} className="p-6 bg-slate-50 rounded-3xl space-y-4 border border-slate-100 shadow-sm">
-                  <input placeholder="Field Label (e.g. Web Dashboard)" value={item.label} onChange={e => updateItem(i, 'label', e.target.value)} className="w-full px-4 py-3 bg-white rounded-xl border-0 text-[10px] font-black uppercase tracking-widest" />
-                  <div className="grid grid-cols-2 gap-3">
-                    <input placeholder="Username/Email" value={item.user} onChange={e => updateItem(i, 'user', e.target.value)} className="px-5 py-4 bg-white rounded-xl border-0 text-sm font-bold" />
-                    <input placeholder="Passphrase" type="password" value={item.pass} onChange={e => updateItem(i, 'pass', e.target.value)} className="px-5 py-4 bg-white rounded-xl border-0 text-sm font-bold" />
+                <div key={i} className="p-8 bg-slate-50 rounded-[2.5rem] space-y-5 border border-slate-100 shadow-sm">
+                  <input placeholder="Field Label (e.g. Master Account)" value={item.label} onChange={e => updateItem(i, 'label', e.target.value)} className="w-full px-5 py-3 bg-white rounded-xl border-0 text-[10px] font-black uppercase tracking-widest" />
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Username / Email</label>
+                      <input placeholder="Username/Email" value={item.user} onChange={e => updateItem(i, 'user', e.target.value)} className="w-full px-5 py-4 bg-white rounded-xl border-0 text-sm font-bold" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Primary Passphrase</label>
+                        <input placeholder="Primary Password" type="password" value={item.pass} onChange={e => updateItem(i, 'pass', e.target.value)} className="w-full px-5 py-4 bg-white rounded-xl border-0 text-sm font-bold" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Sub Passphrase</label>
+                        <input placeholder="Sub Password" type="password" value={item.subPass || ''} onChange={e => updateItem(i, 'subPass', e.target.value)} className="w-full px-5 py-4 bg-white rounded-xl border-0 text-sm font-bold" />
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}
            </div>
-           <button onClick={handleSave} className="w-full py-5 bg-indigo-600 text-white font-black rounded-3xl shadow-xl mt-4 uppercase tracking-widest text-[11px]">Authorize Node Initialization</button>
+           <button onClick={handleSave} className="w-full py-5 bg-indigo-600 text-white font-black rounded-[2.5rem] shadow-xl mt-4 uppercase tracking-widest text-[11px] hover:bg-indigo-700 transition-all">Authorize Node Initialization</button>
         </div>
       </Modal>
     </div>
