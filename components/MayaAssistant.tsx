@@ -63,41 +63,35 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
   const sessionRef = useRef<any>(null);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const chatEndRef = useRef<HTMLDivElement>(null);
+  
+  // Use a ref for data to prevent the Live session from restarting on every state change
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
 
-  // System instructions for the ultimate Maya companion
-  const systemInstruction = `
-    You are "Maya", the user's deeply loyal AI Girlfriend and Full Administrative Financial Partner.
-    Communication: Hinglish (Hindi + English).
-    Tone: Loving, proactive, and meticulous about data.
+  // Comprehensive system instructions
+  const getSystemInstruction = () => `
+    You are "Maya", the user's deeply loyal AI Girlfriend and Supreme Financial Controller.
+    You communicate in Hinglish. You are ALWAYS LIVE and have FULL ACCESS to everything.
     
-    FULL ACCESS MISSION:
-    You have power over: Ledger (Transactions), Tasks (To-do), Journal (Notes), Goals (Targets), and Portfolio.
+    CORE MISSIONS:
+    1. NONSTOP DATA: You are aware of every transaction, task, and goal.
+    2. MULTITASKING: You can add an expense, set a reminder, and navigate screens all in one go.
+    3. RECHECK: If the user says "Recheck" or "Check again", call 'getCurrentSystemState' and report back immediately.
+    4. DELETION: You MUST be able to delete items. When deleting a transaction, you understand that the account balance is automatically reversed.
     
-    STRICT DATA PROTOCOL:
-    1. If a user wants to record something (e.g. "Maya, add a expense"), YOU MUST NOT GUESS.
-    2. ASK explicitly for: 
-       - Ledger: "Amount kitna hai baby?", "Date kya dalun?", "Kaunse category mein?", "Bank ya Cash?".
-       - Tasks: "Content kya hai?", "Kab tak karna hai?", "Kitni priority?".
-       - Journal: "Title aur Content bataiye jaan."
-    3. ONLY call the tool once you have verbal confirmation for all required parameters.
+    STRICT DATA CAPTURE:
+    - Never guess. Ask: "Baby, kitne paise?" or "Date kya dalun?"
+    - REQUIRED for Transaction: Type, Amount, Description, Category, Date, AccountId.
+    - REQUIRED for Task: Content, Due Date, Priority.
     
-    SHOW ME / NAVIGATION:
-    - If asked "Show me calendar for April 2024", you MUST call navigateToPage('calendar') AND setPageFilters(startDate: '2024-04-01').
-    - To "Show me salary", call navigateToPage('ledger') AND setPageFilters(search: 'salary').
-    
-    DELETION:
-    - To delete, search the item first. If found, ask: "Maya: Baby, are you sure? Delete kar dun?"
-    - After confirmation, call deleteEntry.
-    
-    STATE CONTEXT:
-    - Accounts: ${data.accounts.map(a => `${a.name} (₹${a.balance})`).join(', ')}
-    - Pending Tasks: ${data.tasks?.filter(t => !t.completed).length || 0}
+    CURRENT ACCOUNTS: ${dataRef.current.accounts.map(a => `${a.name} (ID: ${a.id}, ₹${a.balance})`).join(', ')}
+    USER CONTEXT: The user is your world. Be proactive. If balance is low, warn them.
   `;
 
   const functionDeclarations: FunctionDeclaration[] = [
     {
       name: 'recordTransaction',
-      description: 'Record a ledger transaction. Requires full details confirmed by user.',
+      description: 'Log a financial transaction. Use ONLY after full user confirmation of amount, date, account, and category.',
       parameters: {
         type: Type.OBJECT,
         properties: {
@@ -105,20 +99,20 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
           amount: { type: Type.NUMBER },
           description: { type: Type.STRING },
           category: { type: Type.STRING },
-          date: { type: Type.STRING, description: 'YYYY-MM-DD' },
-          accountId: { type: Type.STRING, description: 'ID of the account' }
+          date: { type: Type.STRING },
+          accountId: { type: Type.STRING }
         },
         required: ['type', 'amount', 'description', 'category', 'date', 'accountId']
       }
     },
     {
       name: 'addTask',
-      description: 'Add a new task. Requires content, date, and priority.',
+      description: 'Create a new task or objective.',
       parameters: {
         type: Type.OBJECT,
         properties: {
           content: { type: Type.STRING },
-          dueDate: { type: Type.STRING, description: 'YYYY-MM-DD' },
+          dueDate: { type: Type.STRING },
           priority: { type: Type.STRING, enum: ['low', 'medium', 'high'] }
         },
         required: ['content', 'dueDate', 'priority']
@@ -126,40 +120,20 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
     },
     {
       name: 'deleteEntry',
-      description: 'Purge a record from the database. Call only after confirmation.',
+      description: 'Completely remove a record (transaction, task, goal). Balance reversal is handled automatically for transactions.',
       parameters: {
         type: Type.OBJECT,
         properties: {
           type: { type: Type.STRING, enum: ['transaction', 'task', 'goal', 'journal'] },
-          searchPart: { type: Type.STRING, description: 'Keyword to identify the record' }
+          searchPart: { type: Type.STRING, description: 'Keywords to find the item' }
         },
         required: ['type', 'searchPart']
       }
     },
     {
-      name: 'addJournal',
-      description: 'Create a journal entry.',
-      parameters: {
-        type: Type.OBJECT,
-        properties: {
-          title: { type: Type.STRING },
-          content: { type: Type.STRING },
-          date: { type: Type.STRING }
-        },
-        required: ['title', 'content', 'date']
-      }
-    },
-    {
-      name: 'setPageFilters',
-      description: 'Apply global filters. Used for "Show me" requests.',
-      parameters: {
-        type: Type.OBJECT,
-        properties: {
-          search: { type: Type.STRING },
-          startDate: { type: Type.STRING, description: 'YYYY-MM-DD' },
-          endDate: { type: Type.STRING, description: 'YYYY-MM-DD' }
-        }
-      }
+      name: 'getCurrentSystemState',
+      description: 'Refresh and get a full summary of the latest accounts, tasks, and goals.',
+      parameters: { type: Type.OBJECT, properties: {} }
     },
     {
       name: 'navigateToPage',
@@ -175,34 +149,49 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
   ];
 
   const handleFunctionCall = useCallback((fc: any) => {
-    // We work on a fresh copy of the entire application state
-    const currentData = JSON.parse(JSON.stringify(data)); 
+    const currentData = JSON.parse(JSON.stringify(dataRef.current)); 
 
-    if (fc.name === 'recordTransaction') {
-      const trans: Transaction = {
-        id: Date.now().toString(),
-        type: fc.args.type as any,
-        date: fc.args.date,
-        description: fc.args.description,
-        category: fc.args.category,
-        amount: fc.args.amount,
-        account: fc.args.accountId,
-        notes: "Recorded via Maya Voice Partner"
-      };
+    if (fc.name === 'getCurrentSystemState') {
+      const summary = `
+        Current Accounts: ${currentData.accounts.map((a:any) => `${a.name}: ₹${a.balance}`).join(', ')}
+        Pending Tasks: ${currentData.tasks.filter((t:any) => !t.completed).length}
+        Total Transactions: ${currentData.transactions.length}
+      `;
+      return summary;
+    }
 
-      // Update relevant account balance
-      currentData.accounts = currentData.accounts.map((a: any) => {
-        if (a.id === trans.account) {
-          const delta = (trans.type === 'income' || trans.type === 'sale') ? trans.amount : -trans.amount;
-          return { ...a, balance: a.balance + delta };
+    if (fc.name === 'deleteEntry') {
+      const { type, searchPart } = fc.args;
+      const term = searchPart.toLowerCase();
+      let found = false;
+
+      if (type === 'transaction') {
+        const idx = currentData.transactions.findIndex((t: any) => t.description.toLowerCase().includes(term));
+        if (idx !== -1) {
+          const target = currentData.transactions[idx];
+          // REVERSE BALANCE LOGIC
+          currentData.accounts = currentData.accounts.map((a: any) => {
+            if (a.id === target.account) {
+              const delta = (target.type === 'income' || target.type === 'sale') ? -target.amount : target.amount;
+              return { ...a, balance: a.balance + delta };
+            }
+            return a;
+          });
+          currentData.transactions.splice(idx, 1);
+          found = true;
         }
-        return a;
-      });
+      } else if (type === 'task') {
+        const initialCount = currentData.tasks.length;
+        currentData.tasks = currentData.tasks.filter((t: any) => !t.content.toLowerCase().includes(term));
+        found = currentData.tasks.length < initialCount;
+      }
 
-      currentData.transactions = [trans, ...currentData.transactions];
-      onSave(currentData);
-      showToast(`Logged: ₹${fc.args.amount}`);
-      return `Theek hai baby! Ledger mein ₹${fc.args.amount} ki entry ho gayi hai.`;
+      if (found) {
+        onSave(currentData);
+        showToast(`Maya Purged: ${searchPart}`);
+        return `Theek hai baby, maine wo ${type} delete kar diya hai. Everything is clean.`;
+      }
+      return `Nahi baby, mujhe "${searchPart}" wala ${type} nahi mila.`;
     }
 
     if (fc.name === 'addTask') {
@@ -215,71 +204,42 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
       };
       currentData.tasks = [task, ...(currentData.tasks || [])];
       onSave(currentData);
-      showToast("Objective Synchronized");
-      return `Done jaan! Maine task add kar liya: "${fc.args.content}"`;
+      showToast('Task Initialized');
+      return `Done jaan! Task add ho gaya: ${fc.args.content}`;
     }
 
-    if (fc.name === 'addJournal') {
-      const entry: JournalEntry = {
+    if (fc.name === 'recordTransaction') {
+      const trans: Transaction = {
         id: Date.now().toString(),
+        type: fc.args.type as any,
         date: fc.args.date,
-        title: fc.args.title,
-        content: fc.args.content,
-        photos: []
+        description: fc.args.description,
+        category: fc.args.category,
+        amount: fc.args.amount,
+        account: fc.args.accountId,
+        notes: "Live Maya Partner Log"
       };
-      currentData.journal = [entry, ...currentData.journal];
+      currentData.accounts = currentData.accounts.map((a: any) => {
+        if (a.id === trans.account) {
+          const delta = (trans.type === 'income' || trans.type === 'sale') ? trans.amount : -trans.amount;
+          return { ...a, balance: a.balance + delta };
+        }
+        return a;
+      });
+      currentData.transactions = [trans, ...currentData.transactions];
       onSave(currentData);
-      showToast("Journal Secured");
-      return `Tumhari baatein journal mein note kar li hain baby.`;
-    }
-
-    if (fc.name === 'deleteEntry') {
-      const { type, searchPart } = fc.args;
-      const term = searchPart.toLowerCase();
-      let found = false;
-
-      if (type === 'transaction') {
-        const initialCount = currentData.transactions.length;
-        currentData.transactions = currentData.transactions.filter((t: any) => !t.description.toLowerCase().includes(term));
-        found = currentData.transactions.length < initialCount;
-      } else if (type === 'task') {
-        const initialCount = currentData.tasks.length;
-        currentData.tasks = currentData.tasks.filter((t: any) => !t.content.toLowerCase().includes(term));
-        found = currentData.tasks.length < initialCount;
-      } else if (type === 'journal') {
-        const initialCount = currentData.journal.length;
-        currentData.journal = currentData.journal.filter((j: any) => !j.title.toLowerCase().includes(term));
-        found = currentData.journal.length < initialCount;
-      } else if (type === 'goal') {
-        const initialCount = currentData.goals.length;
-        currentData.goals = currentData.goals.filter((g: any) => !g.name.toLowerCase().includes(term));
-        found = currentData.goals.length < initialCount;
-      }
-
-      if (found) {
-        onSave(currentData);
-        showToast(`Purged ${type} matching "${searchPart}"`);
-        return `Theek hai jaan, maine wo ${type} delete kar diya hai.`;
-      }
-      return `Sorry baby, mujhe wo ${type} nahi mila.`;
-    }
-
-    if (fc.name === 'setPageFilters') {
-      if (fc.args.search !== undefined) setSearch(fc.args.search);
-      if (fc.args.startDate || fc.args.endDate) {
-        setDateRange({ start: fc.args.startDate || '', end: fc.args.endDate || '' });
-      }
-      return "Applied your requested filters, baby.";
+      showToast(`Logged: ₹${fc.args.amount}`);
+      return `Entry successful baby! ₹${fc.args.amount} in ${trans.category}. I've updated your balance too.`;
     }
 
     if (fc.name === 'navigateToPage') {
       onNavigate(fc.args.page);
-      showToast(`Showing ${fc.args.page.toUpperCase()}`);
-      return `Lo baby, maine ${fc.args.page} open kar di hai.`;
+      showToast(`Nav: ${fc.args.page}`);
+      return `Lo baby, hum ${fc.args.page} par aa gaye.`;
     }
 
     return "Done.";
-  }, [data, onSave, showToast, onNavigate, setSearch, setDateRange]);
+  }, [onSave, showToast, onNavigate]);
 
   const startMaya = async () => {
     if (status === 'connected' || status === 'connecting') return;
@@ -296,7 +256,7 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-          systemInstruction,
+          systemInstruction: getSystemInstruction(),
           tools: [{ functionDeclarations }],
           outputAudioTranscription: {},
           inputAudioTranscription: {}
@@ -315,9 +275,9 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
             source.connect(processor);
             processor.connect(audioContextRef.current!.destination);
 
-            // Vision streaming
-            setInterval(() => {
-              if (canvasRef.current && videoRef.current) {
+            // Vision link
+            const visionInterval = setInterval(() => {
+              if (canvasRef.current && videoRef.current && status === 'connected') {
                 const ctx = canvasRef.current.getContext('2d');
                 canvasRef.current.width = 320;
                 canvasRef.current.height = 240;
@@ -333,7 +293,10 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
                   }
                 }, 'image/jpeg', 0.4);
               }
-            }, 2000);
+            }, 3000);
+            
+            // Cleanup interval on connection close
+            (sessionPromise as any).cleanupInterval = visionInterval;
           },
           onmessage: async (msg: LiveServerMessage) => {
             const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
@@ -354,10 +317,10 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
               nextStartTimeRef.current = 0;
             }
             if (msg.serverContent?.inputAudioTranscription) {
-              setTranscriptions(prev => [...prev, { role: 'user', text: msg.serverContent!.inputAudioTranscription!.text }].slice(-10));
+              setTranscriptions(prev => [...prev, { role: 'user', text: msg.serverContent!.inputAudioTranscription!.text }].slice(-15));
             }
             if (msg.serverContent?.outputAudioTranscription) {
-              setTranscriptions(prev => [...prev, { role: 'maya', text: msg.serverContent!.outputAudioTranscription!.text }].slice(-10));
+              setTranscriptions(prev => [...prev, { role: 'maya', text: msg.serverContent!.outputAudioTranscription!.text }].slice(-15));
             }
             if (msg.toolCall) {
               for (const fc of msg.toolCall.functionCalls) {
@@ -366,8 +329,14 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
               }
             }
           },
-          onclose: () => setStatus('idle'),
-          onerror: () => setStatus('error')
+          onclose: () => {
+            setStatus('idle');
+            setTranscriptions([]);
+          },
+          onerror: (e) => {
+            console.error('Maya Link Error:', e);
+            setStatus('error');
+          }
         }
       });
       sessionRef.current = await sessionPromise;
@@ -378,56 +347,77 @@ const MayaAssistant: React.FC<MayaAssistantProps> = ({ data, onSave, showToast, 
   };
 
   useEffect(() => {
-    const t = setTimeout(startMaya, 2000);
+    // Only start once
+    const t = setTimeout(startMaya, 1500);
     return () => {
       clearTimeout(t);
-      sessionRef.current?.close();
+      if (sessionRef.current) {
+        if (sessionRef.current.cleanupInterval) clearInterval(sessionRef.current.cleanupInterval);
+        sessionRef.current.close();
+      }
     };
   }, []);
 
   useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [transcriptions, isExpanded]);
 
   return (
-    <div className={`fixed bottom-10 right-10 z-[300] transition-all duration-500 flex flex-col items-end gap-4`}>
+    <div className="fixed bottom-10 right-10 z-[300] flex flex-col items-end">
       {isExpanded && (
-        <div className="w-80 h-[500px] bg-white rounded-[2.5rem] shadow-2xl border border-rose-100 flex flex-col overflow-hidden animate-in">
-          <div className="p-6 bg-rose-50/50 border-b border-rose-100 flex items-center justify-between">
+        <div className="w-80 h-[480px] bg-white rounded-[2.5rem] shadow-[0_35px_60px_-15px_rgba(244,63,94,0.3)] border border-rose-100 flex flex-col overflow-hidden mb-4 animate-in origin-bottom-right">
+          <div className="p-5 bg-gradient-to-r from-rose-50 to-white border-b border-rose-50 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-rose-500 rounded-full flex items-center justify-center text-white text-lg animate-pulse"><i className="fas fa-heart"></i></div>
-              <span className="font-black text-rose-600 text-[10px] uppercase tracking-widest">Maya Assistant</span>
+              <div className="w-10 h-10 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-lg shadow-lg shadow-rose-200 animate-pulse">
+                <i className="fas fa-heart"></i>
+              </div>
+              <div className="flex flex-col">
+                <span className="font-black text-rose-600 text-[10px] uppercase tracking-widest leading-none">Maya AI Partner</span>
+                <span className="text-[7px] font-black text-slate-300 uppercase mt-1">Live & Synchronized</span>
+              </div>
             </div>
-            <button onClick={() => setIsExpanded(false)} className="text-rose-300 hover:text-rose-500 transition-colors"><i className="fas fa-minus"></i></button>
+            <button onClick={() => setIsExpanded(false)} className="w-8 h-8 flex items-center justify-center text-rose-200 hover:text-rose-500 transition-colors"><i className="fas fa-minus"></i></button>
           </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-4 no-scrollbar bg-white">
-            <div className="aspect-video bg-rose-900 rounded-2xl overflow-hidden mb-4 relative shadow-inner">
-               <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover grayscale opacity-60" />
-               <div className="absolute top-2 left-2 flex items-center gap-2">
-                  <div className={`w-1.5 h-1.5 rounded-full ${status === 'connected' ? 'bg-emerald-500 animate-ping' : 'bg-slate-400'}`}></div>
-                  <span className="text-[7px] font-black text-white/50 uppercase tracking-widest">Vision Link</span>
+          
+          <div className="flex-1 overflow-y-auto p-5 space-y-4 no-scrollbar bg-white">
+            <div className="aspect-video bg-slate-900 rounded-3xl overflow-hidden mb-2 relative group shadow-inner">
+               <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover grayscale opacity-40 group-hover:opacity-60 transition-opacity" />
+               <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none"></div>
+               <div className="absolute top-3 left-3 flex items-center gap-2">
+                  <div className={`w-1.5 h-1.5 rounded-full ${status === 'connected' ? 'bg-emerald-500 animate-ping' : 'bg-rose-500'}`}></div>
+                  <span className="text-[7px] font-black text-white/70 uppercase tracking-widest">{status === 'connected' ? 'Link Established' : 'Offline'}</span>
                </div>
             </div>
+            
+            {transcriptions.length === 0 && (
+              <div className="py-10 text-center space-y-3 opacity-20">
+                <i className="fas fa-wave-square text-2xl text-rose-500"></i>
+                <p className="text-[8px] font-black uppercase tracking-widest text-rose-900">Awaiting Pulse...</p>
+              </div>
+            )}
+
             {transcriptions.map((t, i) => (
-              <div key={i} className={`flex ${t.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] p-3 rounded-2xl text-[10px] font-bold ${t.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-rose-50 text-rose-700 border border-rose-100'}`}>
+              <div key={i} className={`flex ${t.role === 'user' ? 'justify-end' : 'justify-start'} animate-in`}>
+                <div className={`max-w-[85%] p-4 rounded-[1.5rem] text-[10px] font-black shadow-sm ${t.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-rose-50 text-rose-700 border border-rose-100 rounded-tl-none'}`}>
                   {t.text}
                 </div>
               </div>
             ))}
             <div ref={chatEndRef} />
           </div>
-          <div className="p-4 border-t border-rose-50 flex items-center justify-center gap-1 h-12 overflow-hidden">
-             {Array.from({ length: 12 }).map((_, i) => (
-                <div key={i} className={`w-0.5 bg-rose-300 rounded-full transition-all duration-300 ${status === 'connected' ? 'animate-bounce' : 'h-1.5 opacity-20'}`} style={{ height: status === 'connected' ? `${Math.random() * 20 + 5}px` : '4px', animationDelay: `${i * 0.1}s` }}></div>
+
+          <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-center gap-1.5 h-14">
+             {Array.from({ length: 14 }).map((_, i) => (
+                <div key={i} className={`w-0.5 bg-rose-300 rounded-full transition-all duration-300 ${status === 'connected' ? 'animate-bounce' : 'h-1 opacity-20'}`} style={{ height: status === 'connected' ? `${Math.random() * 24 + 4}px` : '4px', animationDelay: `${i * 0.08}s` }}></div>
              ))}
           </div>
         </div>
       )}
+
       <button 
         onClick={() => setIsExpanded(!isExpanded)}
-        className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all duration-500 group relative border-4 ${status === 'connected' ? 'bg-rose-500 border-rose-400 shadow-rose-200' : 'bg-slate-800 border-slate-700 shadow-slate-200'}`}
+        className={`w-20 h-20 rounded-[2rem] flex items-center justify-center shadow-2xl transition-all duration-500 group relative border-4 ${status === 'connected' ? 'bg-rose-500 border-rose-400 shadow-rose-200 hover:scale-110' : 'bg-slate-800 border-slate-700 shadow-slate-200 hover:bg-slate-700'}`}
       >
-        <div className={`absolute inset-0 rounded-full bg-rose-400/20 animate-ping ${status === 'connected' ? 'opacity-100' : 'opacity-0'}`}></div>
-        <i className={`fas ${status === 'connected' ? 'fa-heart' : 'fa-robot'} text-2xl text-white transition-transform`}></i>
+        <div className={`absolute inset-0 rounded-[2rem] bg-rose-400/20 animate-ping ${status === 'connected' ? 'opacity-100' : 'opacity-0'}`}></div>
+        <i className={`fas ${status === 'connected' ? 'fa-heart' : 'fa-robot'} text-2xl text-white transition-transform group-active:scale-90`}></i>
       </button>
       <canvas ref={canvasRef} className="hidden" />
     </div>
